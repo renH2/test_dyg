@@ -13,7 +13,7 @@ def get_link_prediction_args(is_evaluation: bool = False):
     parser = argparse.ArgumentParser('Interface for the link prediction task')
     # parser.add_argument('--dataset_name', type=str, help='dataset to be used', default='wikipedia',
     #                     choices=['dgraph','wikipedia', 'reddit', 'mooc', 'lastfm', 'myket', 'enron', 'SocialEvo', 'uci', 'Flights', 'CanParl', 'USLegis', 'UNtrade', 'UNvote', 'Contacts'])
-    parser.add_argument('--dataset_name', type=str, help='dataset to be used', default='dgraph',
+    parser.add_argument('--dataset_name', type=str, help='dataset to be used', default='wikipedia',
                         choices=['dgraph', 'wikipedia', 'reddit', 'mooc', 'lastfm', 'myket', 'enron', 'SocialEvo',
                                  'uci', 'Flights', 'CanParl', 'USLegis', 'UNtrade', 'UNvote', 'Contacts'])
     parser.add_argument('--batch_size', type=int, default=200, help='batch size')
@@ -43,6 +43,8 @@ def get_link_prediction_args(is_evaluation: bool = False):
     parser.add_argument('--edge_bank_memory_mode', type=str, default='unlimited_memory',
                         help='how memory of EdgeBank works',
                         choices=['unlimited_memory', 'time_window_memory', 'repeat_threshold_memory'])
+    parser.add_argument('--batch_sampling', type=int, default=1, help='Whether we will use the batch sampling strategy')
+    parser.add_argument('--batch_rate', type=float, default=0.5, help='Whether we will sampling the hard sample')
     parser.add_argument('--time_window_mode', type=str, default='fixed_proportion',
                         help='how to select the time window size for time window memory',
                         choices=['fixed_proportion', 'repeat_interval'])
@@ -449,8 +451,11 @@ def get_method_args():
     parser.add_argument('--test_ratio', type=float, default=0.15, help='ratio of test set')
     parser.add_argument('--target_ratio', type=float, default=0.2, help='ratio of target node')
     parser.add_argument('--num_runs', type=int, default=1, help='number of runs')
+    parser.add_argument('--mlp_time', type=int, default=1, help='whether to use mlp time encoder')
     # parser.add_argument('--save_pkl', type=int, default=1, help='number of runs')
     parser.add_argument('--save_pkl', type=int, default=0, help='whether to save')
+    parser.add_argument('--save_curve', type=int, default=0, help='whether to save')
+    parser.add_argument('--exp_name', type=str, default="", help='whether to save')
     parser.add_argument('--test_interval_epochs', type=int, default=10, help='how many epochs to perform testing once')
     parser.add_argument('--val_interval_epochs', type=int, default=10, help='how many epochs to perform testing once')
     parser.add_argument('--load_best_configs', action='store_true', default=False,

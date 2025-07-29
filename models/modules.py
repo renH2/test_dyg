@@ -5,7 +5,6 @@ import torch.nn.functional as F
 
 
 class TimeEncoder(nn.Module):
-
     def __init__(self, time_dim: int, parameter_requires_grad: bool = True):
         """
         Time encoder.
@@ -13,7 +12,6 @@ class TimeEncoder(nn.Module):
         :param parameter_requires_grad: boolean, whether the parameter in TimeEncoder needs gradient
         """
         super(TimeEncoder, self).__init__()
-
         self.time_dim = time_dim
         # trainable parameters for time encoding
         self.w = nn.Linear(1, time_dim)
@@ -31,17 +29,47 @@ class TimeEncoder(nn.Module):
         :param timestamps: Tensor, shape (batch_size, seq_len)
         :return:
         """
-        # Tensor, shape (batch_size, seq_len, 1)
         timestamps = timestamps.unsqueeze(dim=2)
-
-        # Tensor, shape (batch_size, seq_len, time_dim)
         output = torch.cos(self.w(timestamps))
+        return output
 
+
+class MLPTimeEncoder(nn.Module):
+    def __init__(self, time_dim: int, hidden_dim: int = None, parameter_requires_grad: bool = True):
+        super(MLPTimeEncoder, self).__init__()
+        self.time_dim = time_dim
+        self.hidden_dim = hidden_dim if hidden_dim is not None else time_dim
+        self.mlp = nn.Sequential(
+            nn.Linear(1, self.hidden_dim),
+            nn.ReLU(),  # 高效的非线性激活
+            nn.Linear(self.hidden_dim, time_dim)  # 输出目标维度
+        )
+        if not parameter_requires_grad:
+            for param in self.mlp.parameters():
+                param.requires_grad = False
+
+    def forward(self, timestamps: torch.Tensor):
+        timestamps = timestamps.unsqueeze(dim=2)  # 与原TimeEncoder一致
+        output = self.mlp(timestamps)
+        return output
+
+
+class DiscreteTimeEncoder(nn.Module):
+    def __init__(self, time_dim: int, num_bins: int = 100, max_time: float = 1e6):
+        super(DiscreteTimeEncoder, self).__init__()
+        self.time_dim = time_dim
+        self.num_bins = num_bins
+        self.max_time = max_time
+        self.embedding = nn.Embedding(num_bins + 1, time_dim)  # +1 处理超过max_time的情况
+
+    def forward(self, timestamps: torch.Tensor):
+        bins = torch.linspace(0, self.max_time, self.num_bins, device=timestamps.device)  # 分箱边界
+        bin_indices = torch.bucketize(timestamps, bins, right=True).clamp(max=self.num_bins)  # (B, L)
+        output = self.embedding(bin_indices)  # (B, L, time_dim)
         return output
 
 
 class MergeLayer(nn.Module):
-
     def __init__(self, input_dim1: int, input_dim2: int, hidden_dim: int, output_dim: int):
         """
         Merge Layer to merge two inputs via: input_dim1 + input_dim2 -> hidden_dim -> output_dim.

@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from models.modules import TimeEncoder, MergeLayer, MultiHeadAttention, FastMultiAttention
+from models.modules import TimeEncoder, MergeLayer, MultiHeadAttention, FastMultiAttention,MLPTimeEncoder, DiscreteTimeEncoder
 from utils.utils import NeighborSampler
 import time
 import torch.nn.functional as F
@@ -11,7 +11,7 @@ import torch.nn.functional as F
 class TGAT(nn.Module):
     def __init__(self, node_raw_features: np.ndarray, edge_raw_features: np.ndarray, neighbor_sampler: NeighborSampler,
                  time_feat_dim: int, num_layers: int = 2, num_heads: int = 2, dropout: float = 0.1,
-                 device: str = 'cpu'):
+                 device: str = 'cpu', mlp_time: int=0):
         """
         TGAT model.
         :param node_raw_features: ndarray, shape (num_nodes + 1, node_feat_dim)
@@ -43,7 +43,14 @@ class TGAT(nn.Module):
         self.dropout = dropout
         self.temperature = 0.7
 
-        self.time_encoder = TimeEncoder(time_dim=time_feat_dim)
+        if mlp_time == 1:
+            #不好用
+            print("Using Other Time Encoder")
+            # self.time_encoder = MLPTimeEncoder(time_dim=time_feat_dim)
+            self.time_encoder = DiscreteTimeEncoder(time_dim=time_feat_dim)
+        else:
+            print("Using Origin Time Encoder")
+            self.time_encoder = TimeEncoder(time_dim=time_feat_dim)
 
         # if self.neighbor_sampler.sample_args.fast_attention == 1:
         #     self.temporal_conv_layers = nn.ModuleList([FastMultiAttention(node_feat_dim=self.node_feat_dim,

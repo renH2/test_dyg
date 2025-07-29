@@ -10,6 +10,7 @@ import json
 import torch
 import torch.nn as nn
 import psutil
+import pickle
 
 from models.TGAT import TGAT
 from models.MemoryModel import MemoryModel, compute_src_dst_node_time_shifts
@@ -78,11 +79,11 @@ if __name__ == "__main__":
     if args.dataset_name == "dgraph":
         node_raw_features, edge_raw_features, full_data, train_data, val_data, test_data = \
             get_node_classification_dgraph(dataset_name=args.dataset_name, val_ratio=args.val_ratio,
-                                           test_ratio=args.test_ratio, target_ratio=0.2)
+                                           test_ratio=args.test_ratio, target_ratio=args.target_ratio)
     else:
         node_raw_features, edge_raw_features, full_data, train_data, val_data, test_data = \
             get_node_classification_data_withtarget_ratio(dataset_name=args.dataset_name, val_ratio=args.val_ratio,
-                                                          test_ratio=args.test_ratio, target_ratio=0.2)
+                                                          test_ratio=args.test_ratio, target_ratio=args.target_ratio)
 
     args.node_dim, args.time_dim = node_raw_features.shape[1], args.time_feat_dim
     # 计算节点影响力的一个部分
@@ -139,7 +140,7 @@ if __name__ == "__main__":
             dynamic_backbone = TGAT(node_raw_features=node_raw_features, edge_raw_features=edge_raw_features,
                                     neighbor_sampler=full_neighbor_sampler, time_feat_dim=args.time_feat_dim,
                                     num_layers=args.num_layers, num_heads=args.num_heads, dropout=args.dropout,
-                                    device=args.device)
+                                    device=args.device, mlp_time=args.mlp_time)
         elif args.model_name in ['JODIE', 'DyRep', 'TGN']:
             src_node_mean_time_shift, src_node_std_time_shift, dst_node_mean_time_shift_dst, dst_node_std_time_shift = \
                 compute_src_dst_node_time_shifts(train_data.src_node_ids, train_data.dst_node_ids,
@@ -166,8 +167,8 @@ if __name__ == "__main__":
         elif args.model_name == 'GraphMixer':
             dynamic_backbone = GraphMixer(node_raw_features=node_raw_features, edge_raw_features=edge_raw_features,
                                           neighbor_sampler=full_neighbor_sampler, time_feat_dim=args.time_feat_dim,
-                                          num_tokens=args.num_neighbors,
-                                          num_layers=args.num_layers, dropout=args.dropout, device=args.device)
+                                          num_tokens=args.num_neighbors, num_layers=args.num_layers,
+                                          dropout=args.dropout, device=args.device)
         elif args.model_name == 'DyGFormer':
             dynamic_backbone = DyGFormer(node_raw_features=node_raw_features, edge_raw_features=edge_raw_features,
                                          neighbor_sampler=full_neighbor_sampler, time_feat_dim=args.time_feat_dim,
@@ -183,7 +184,9 @@ if __name__ == "__main__":
         if args.random is True:
             load_model_folder = root + f"/saved_models_random/{args.model_name}/{args.dataset_name}/{args.load_model_name}"
             save_path = os.path.join(load_model_folder, f"{args.load_model_name}.pkl")
-            if os.path.exists(load_model_folder):
+            nonparametric_data_path = os.path.join(load_model_folder,
+                                              f"{args.load_model_name}_nonparametric_data.pkl")
+            if os.path.exists(load_model_folder) and os.path.exists(nonparametric_data_path):
                 pass
             else:
                 os.makedirs(load_model_folder, exist_ok=True)
@@ -193,8 +196,7 @@ if __name__ == "__main__":
                 model = nn.Sequential(dynamic_backbone, link_predictor)
                 torch.save(model.state_dict(), save_path)
                 if args.model_name in ['JODIE', 'DyRep', 'TGN']:
-                    pass
-                    # torch.save(model[0].memory_bank.node_raw_messages, self.save_model_nonparametric_data_path)
+                    torch.save(model[0].memory_bank.node_raw_messages, nonparametric_data_path)
                 print(f"目录 '{load_model_folder}' 不存在")
         else:
             load_model_folder = f"/data/renhong/dyg/our_models/saved_models/{args.model_name}/{args.dataset_name}/{args.load_model_name}"
@@ -256,27 +258,50 @@ if __name__ == "__main__":
             t3 = time.time()
             for batch_idx, train_data_indices in enumerate(train_idx_data_loader_tqdm):
                 batch_size = train_data_indices.shape[0]
+
                 if args.batch_sampling == 1 and epoch % 5 == 0:
                     batch_memory[batch_idx] = np.arange(0, len(train_data_indices))
 
                 # train_data_indices = torch.tensor(
                 #     np.random.choice(train_data_indices.numpy(), size=int(len(train_data_indices) * 0.5),
                 #                      replace=False))
-                train_data_indices = train_data_indices.numpy()
-                if args.batch_sampling == 1 and epoch % 5 != 0:
-                    train_data_indices = train_data_indices[batch_memory[batch_idx]]
-                batch_src_node_ids, batch_dst_node_ids, batch_node_interact_times, batch_edge_ids, batch_labels = \
-                    train_data.src_node_ids[train_data_indices], train_data.dst_node_ids[train_data_indices], \
-                        train_data.node_interact_times[train_data_indices], \
-                        train_data.edge_ids[train_data_indices], train_data.labels[train_data_indices]
-
-                if (args.dataset_name in ['BitAlpha', 'BitOtc']):
+                if (args.dataset_name in ['BitAlpha', 'BitOtc', 'dgraph']):
+                    batch_src_node_ids, batch_dst_node_ids, batch_node_interact_times, batch_edge_ids, batch_labels = \
+                        train_data.src_node_ids[train_data_indices], train_data.dst_node_ids[train_data_indices], \
+                            train_data.node_interact_times[train_data_indices], \
+                            train_data.edge_ids[train_data_indices], train_data.labels[train_data_indices]
                     mask = np.isin(batch_labels, [0, 1])
-                    batch_src_node_ids = batch_src_node_ids[mask]
-                    batch_dst_node_ids = batch_dst_node_ids[mask]
-                    batch_node_interact_times = batch_node_interact_times[mask]
-                    batch_edge_ids = batch_edge_ids[mask]
-                    batch_labels = batch_labels[mask]
+                    if args.batch_sampling == 1 and epoch % 5 != 0:
+                        # print("batch_labels", batch_labels[mask])
+                        # print("batch_labels1",  train_data.labels[train_data_indices[mask]])
+                        train_data_indices = train_data_indices[mask][batch_memory[batch_idx]]
+                        batch_src_node_ids, batch_dst_node_ids, batch_node_interact_times, batch_edge_ids, batch_labels = \
+                            train_data.src_node_ids[train_data_indices], train_data.dst_node_ids[train_data_indices], \
+                                train_data.node_interact_times[train_data_indices], \
+                                train_data.edge_ids[train_data_indices], train_data.labels[train_data_indices]
+                    else:
+                        batch_src_node_ids = batch_src_node_ids[mask]
+                        batch_dst_node_ids = batch_dst_node_ids[mask]
+                        batch_node_interact_times = batch_node_interact_times[mask]
+                        batch_edge_ids = batch_edge_ids[mask]
+                        batch_labels = batch_labels[mask]
+                        # print("batch_labels", batch_labels)
+                else:
+                    train_data_indices = train_data_indices.numpy()
+                    if args.batch_sampling == 1 and epoch % 5 != 0:
+                        train_data_indices = train_data_indices[batch_memory[batch_idx]]
+                    batch_src_node_ids, batch_dst_node_ids, batch_node_interact_times, batch_edge_ids, batch_labels = \
+                        train_data.src_node_ids[train_data_indices], train_data.dst_node_ids[train_data_indices], \
+                            train_data.node_interact_times[train_data_indices], \
+                            train_data.edge_ids[train_data_indices], train_data.labels[train_data_indices]
+
+                # if (args.dataset_name in ['BitAlpha', 'BitOtc']):
+                #     mask = np.isin(batch_labels, [0, 1])
+                #     batch_src_node_ids = batch_src_node_ids[mask]
+                #     batch_dst_node_ids = batch_dst_node_ids[mask]
+                #     batch_node_interact_times = batch_node_interact_times[mask]
+                #     batch_edge_ids = batch_edge_ids[mask]
+                #     batch_labels = batch_labels[mask]
 
                 t1 = time.time()
                 if args.model_name in ['TGAT', 'CAWN', 'TCL']:
@@ -326,7 +351,8 @@ if __name__ == "__main__":
                     # idx = torch.where(predicts < args.batch_threshold)[0].cpu().numpy()
                     # batch_memory[batch_idx] = idx
                     entropy = - (predicts * torch.log(predicts) + (1 - predicts) * torch.log(1 - predicts))
-                    _, topk_idx = torch.topk(entropy, k=int(args.batch_rate * batch_size))
+                    # _, topk_idx = torch.topk(entropy, k=int(args.batch_rate * batch_size))
+                    _, topk_idx = torch.topk(entropy, k=int(args.batch_rate * predicts.shape[0]))
                     idx = topk_idx.cpu().numpy()
                     batch_memory[batch_idx] = idx
 
@@ -350,10 +376,14 @@ if __name__ == "__main__":
             train_total_loss /= (batch_idx + 1)
             train_y_trues = torch.cat(train_y_trues, dim=0)
             train_y_predicts = torch.cat(train_y_predicts, dim=0)
+            # print("train_y_predicts",train_y_predicts)
+            # print("train_y_trues",train_y_trues)
             train_metrics = get_node_classification_metrics(predicts=train_y_predicts, labels=train_y_trues)
 
-            val_total_loss, val_metrics = evaluate_model_node_classification(model_name=args.model_name, model=model, neighbor_sampler=full_neighbor_sampler,
-                                                                             evaluate_idx_data_loader=val_idx_data_loader,  evaluate_data=val_data,
+            val_total_loss, val_metrics = evaluate_model_node_classification(model_name=args.model_name, model=model,
+                                                                             neighbor_sampler=full_neighbor_sampler,
+                                                                             evaluate_idx_data_loader=val_idx_data_loader,
+                                                                             evaluate_data=val_data,
                                                                              loss_func=loss_func,
                                                                              num_neighbors=args.num_neighbors,
                                                                              time_gap=args.time_gap,
@@ -405,6 +435,18 @@ if __name__ == "__main__":
                 test_roc_list.append(test_metrics["roc_auc"])
             t6 = time.time()
             evaluate_time = evaluate_time + t6 - t5
+
+        if args.save_curve:
+            save_path = ""  # 保存路径
+            with open(f'./saved_result/{args.dataset_name}_{args.dataset_name}_{args.exp_name}_{str(run)}.pkl',
+                      "wb") as f:
+                # 将两个列表打包成字典保存（方便后续读取时区分）
+                data = {
+                    "train_total_loss": train_total_loss_list,
+                    "train_roc_auc": train_roc_list
+                }
+                pickle.dump(data, f)
+            print(f"列表已保存到 {save_path}")
 
         # select the best model based on all the validate metrics
         val_metric_indicator = []
@@ -503,12 +545,12 @@ if __name__ == "__main__":
         logger.info(
             f'test {metric_name}, {[test_metric_single_run[metric_name] for test_metric_single_run in test_metric_all_runs]}')
         logger.info(
-            f'average test {metric_name}, {np.mean([test_metric_single_run[metric_name] for test_metric_single_run in test_metric_all_runs]):.4f} '
+            f'Model {args.model_name} average test {metric_name}, {np.mean([test_metric_single_run[metric_name] for test_metric_single_run in test_metric_all_runs]):.4f} '
             f'± {np.std([test_metric_single_run[metric_name] for test_metric_single_run in test_metric_all_runs], ddof=1):.4f}')
 
     f2 = time.time()
     print("Sampling time", sampling_time)
     print("Training time", training_time)
     print("Evaluate time", evaluate_time)
-    print("Total time ", f2 - f1)
+    print("Total time ", (f2 - f1)/args.num_runs)
     sys.exit()
